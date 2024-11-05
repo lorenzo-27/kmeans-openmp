@@ -1,0 +1,6 @@
+/data/*
+/.venv/*
+/.idea/*
+/cmake-build-debug/*
+/results/*
+/kmeans-optimized.cpp
