@@ -3,5 +3,4 @@
 /.idea/*
 /cmake-build-debug/*
 /results/*
-/kmeans-optimized.cpp
 /__pycache__
