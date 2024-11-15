@@ -9,34 +9,65 @@
 struct SoATag {};
 struct AoSTag {};
 
-// Base Dataset structure with common functionality
+// Base Dataset structure
 struct DatasetBase {
     size_t n_points;
     size_t n_dims;
 };
 
-// Structure of Arrays (SoA) implementation
+// SoA implementation
 struct DatasetSoA : DatasetBase {
-    std::vector<std::vector<float>> coords_by_dim; // [dim][point]
+    std::vector<float> data; // Single contiguous array for all data
 
     void resize(size_t points, size_t dims) {
         n_points = points;
         n_dims = dims;
-        coords_by_dim.resize(dims);
-        for (auto& dim : coords_by_dim) {
-            dim.resize(points);
-        }
+        data.resize(points * dims);
+    }
+
+    // Optimized accessors for better cache usage
+    float* get_dimension(size_t dim) {
+        return &data[dim * n_points];
+    }
+
+    const float* get_dimension(size_t dim) const {
+        return &data[dim * n_points];
+    }
+
+    float& at(size_t dim, size_t point) {
+        return data[dim * n_points + point];
+    }
+
+    const float& at(size_t dim, size_t point) const {
+        return data[dim * n_points + point];
     }
 };
 
-// Array of Structures (AoS) implementation
+// AoS implementation
 struct DatasetAoS : DatasetBase {
-    std::vector<float> coords; // [point * n_dims + dim]
+    std::vector<float> coords;
 
     void resize(size_t points, size_t dims) {
         n_points = points;
         n_dims = dims;
         coords.resize(points * dims);
+    }
+
+    // Optimized accessors
+    float* get_point(size_t point) {
+        return &coords[point * n_dims];
+    }
+
+    const float* get_point(size_t point) const {
+        return &coords[point * n_dims];
+    }
+
+    float& at(size_t point, size_t dim) {
+        return coords[point * n_dims + dim];
+    }
+
+    const float& at(size_t point, size_t dim) const {
+        return coords[point * n_dims + dim];
     }
 };
 
@@ -47,30 +78,59 @@ struct CentroidsBase {
     std::vector<size_t> counts;
 };
 
-// SoA implementation for centroids
+// SoA implementation
 struct CentroidsSoA : CentroidsBase {
-    std::vector<std::vector<float>> coords_by_dim; // [dim][centroid]
+    std::vector<float> data;
 
     void resize(size_t clusters, size_t dims) {
         k = clusters;
         n_dims = dims;
-        coords_by_dim.resize(dims);
-        for (auto& dim : coords_by_dim) {
-            dim.resize(clusters);
-        }
+        data.resize(clusters * dims);
         counts.resize(clusters);
+    }
+
+    float* get_dimension(size_t dim) {
+        return &data[dim * k];
+    }
+
+    const float* get_dimension(size_t dim) const {
+        return &data[dim * k];
+    }
+
+    float& at(size_t dim, size_t cluster) {
+        return data[dim * k + cluster];
+    }
+
+    const float& at(size_t dim, size_t cluster) const {
+        return data[dim * k + cluster];
     }
 };
 
-// AoS implementation for centroids
+// AoS implementation
 struct CentroidsAoS : CentroidsBase {
-    std::vector<float> coords; // [centroid * n_dims + dim]
+    std::vector<float> coords;
 
     void resize(size_t clusters, size_t dims) {
         k = clusters;
         n_dims = dims;
         coords.resize(clusters * dims);
         counts.resize(clusters);
+    }
+
+    float* get_centroid(size_t cluster) {
+        return &coords[cluster * n_dims];
+    }
+
+    const float* get_centroid(size_t cluster) const {
+        return &coords[cluster * n_dims];
+    }
+
+    float& at(size_t cluster, size_t dim) {
+        return coords[cluster * n_dims + dim];
+    }
+
+    const float& at(size_t cluster, size_t dim) const {
+        return coords[cluster * n_dims + dim];
     }
 };
 
@@ -85,7 +145,7 @@ Dataset read_dataset(const std::string& filename) {
     size_t n_dims = std::count(line.begin(), line.end(), ',') + 1;
 
     // Count points
-    size_t n_points = 1; // Including the first line we just read
+    size_t n_points = 1;
     while (std::getline(file, line)) {
         n_points++;
     }
@@ -105,11 +165,11 @@ Dataset read_dataset(const std::string& filename) {
             size_t pos = 0;
             size_t dim_idx = 0;
             while ((pos = line.find(',')) != std::string::npos) {
-                data.coords_by_dim[dim_idx][point_idx] = std::stof(line.substr(0, pos));
+                data.at(dim_idx, point_idx) = std::stof(line.substr(0, pos));
                 line.erase(0, pos + 1);
                 dim_idx++;
             }
-            data.coords_by_dim[dim_idx][point_idx] = std::stof(line);
+            data.at(dim_idx, point_idx) = std::stof(line);
             point_idx++;
         }
     } else {
@@ -119,11 +179,11 @@ Dataset read_dataset(const std::string& filename) {
             size_t pos = 0;
             size_t dim_idx = 0;
             while ((pos = line.find(',')) != std::string::npos) {
-                data.coords[point_idx * data.n_dims + dim_idx] = std::stof(line.substr(0, pos));
+                data.at(point_idx, dim_idx) = std::stof(line.substr(0, pos));
                 line.erase(0, pos + 1);
                 dim_idx++;
             }
-            data.coords[point_idx * data.n_dims + dim_idx] = std::stof(line);
+            data.at(point_idx, dim_idx) = std::stof(line);
             point_idx++;
         }
     }
@@ -140,20 +200,17 @@ Centroids initialize_centroids(const Dataset& data, size_t k) {
     centroids.resize(k, data.n_dims);
 
     if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
-        // SoA implementation
         for (size_t i = 0; i < k; ++i) {
             size_t idx = dis(gen);
             for (size_t d = 0; d < data.n_dims; ++d) {
-                centroids.coords_by_dim[d][i] = data.coords_by_dim[d][idx];
+                centroids.at(d, i) = data.at(d, idx);
             }
         }
     } else {
-        // AoS implementation
         for (size_t i = 0; i < k; ++i) {
             size_t idx = dis(gen);
             for (size_t d = 0; d < data.n_dims; ++d) {
-                centroids.coords[i * data.n_dims + d] =
-                    data.coords[idx * data.n_dims + d];
+                centroids.at(i, d) = data.at(idx, d);
             }
         }
     }
@@ -167,19 +224,17 @@ float compute_distance(const Dataset& data, size_t point_idx,
     float dist = 0.0f;
 
     if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
-        // SoA implementation
-        #pragma omp simd reduction(+:dist)
+#pragma omp simd reduction(+:dist)
         for (size_t d = 0; d < data.n_dims; ++d) {
-            float diff = data.coords_by_dim[d][point_idx] -
-                        centroids.coords_by_dim[d][centroid_idx];
+            float diff = data.at(d, point_idx) - centroids.at(d, centroid_idx);
             dist += diff * diff;
         }
     } else {
-        // AoS implementation
-        #pragma omp simd reduction(+:dist)
+        const float* point = data.get_point(point_idx);
+        const float* centroid = centroids.get_centroid(centroid_idx);
+#pragma omp simd reduction(+:dist)
         for (size_t d = 0; d < data.n_dims; ++d) {
-            float diff = data.coords[point_idx * data.n_dims + d] -
-                        centroids.coords[centroid_idx * data.n_dims + d];
+            float diff = point[d] - centroid[d];
             dist += diff * diff;
         }
     }
@@ -190,6 +245,8 @@ float compute_distance(const Dataset& data, size_t point_idx,
 template<typename Dataset, typename Centroids>
 void kmeans_sequential(const Dataset& data, Centroids& centroids,
                       std::vector<int>& assignments, int max_iter) {
+    std::vector<float> new_centroid_data(centroids.k * data.n_dims, 0.0f);
+
     for (int iter = 0; iter < max_iter; ++iter) {
         // Assignment step
         for (size_t i = 0; i < data.n_points; ++i) {
@@ -207,42 +264,44 @@ void kmeans_sequential(const Dataset& data, Centroids& centroids,
         }
 
         // Reset centroids
-        if constexpr (std::is_same_v<Centroids, CentroidsSoA>) {
-            for (auto& dim : centroids.coords_by_dim) {
-                std::fill(dim.begin(), dim.end(), 0.0f);
-            }
-        } else {
-            std::fill(centroids.coords.begin(), centroids.coords.end(), 0.0f);
-        }
+        std::fill(new_centroid_data.begin(), new_centroid_data.end(), 0.0f);
         std::fill(centroids.counts.begin(), centroids.counts.end(), 0);
 
         // Update step
-        for (size_t i = 0; i < data.n_points; ++i) {
-            int cluster = assignments[i];
-            centroids.counts[cluster]++;
-
-            if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
+        if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
+            for (size_t i = 0; i < data.n_points; ++i) {
+                int cluster = assignments[i];
+                centroids.counts[cluster]++;
                 for (size_t d = 0; d < data.n_dims; ++d) {
-                    centroids.coords_by_dim[d][cluster] += data.coords_by_dim[d][i];
+                    new_centroid_data[d * centroids.k + cluster] += data.at(d, i);
                 }
-            } else {
+            }
+        } else {
+            for (size_t i = 0; i < data.n_points; ++i) {
+                int cluster = assignments[i];
+                centroids.counts[cluster]++;
+                const float* point = data.get_point(i);
                 for (size_t d = 0; d < data.n_dims; ++d) {
-                    centroids.coords[cluster * data.n_dims + d] +=
-                        data.coords[i * data.n_dims + d];
+                    new_centroid_data[cluster * data.n_dims + d] += point[d];
                 }
             }
         }
 
         // Normalize centroids
-        for (size_t j = 0; j < centroids.k; ++j) {
-            if (centroids.counts[j] > 0) {
-                if constexpr (std::is_same_v<Centroids, CentroidsSoA>) {
+        if constexpr (std::is_same_v<Centroids, CentroidsSoA>) {
+            for (size_t j = 0; j < centroids.k; ++j) {
+                if (centroids.counts[j] > 0) {
                     for (size_t d = 0; d < data.n_dims; ++d) {
-                        centroids.coords_by_dim[d][j] /= centroids.counts[j];
+                        centroids.at(d, j) = new_centroid_data[d * centroids.k + j] / centroids.counts[j];
                     }
-                } else {
+                }
+            }
+        } else {
+            for (size_t j = 0; j < centroids.k; ++j) {
+                if (centroids.counts[j] > 0) {
+                    float* centroid = centroids.get_centroid(j);
                     for (size_t d = 0; d < data.n_dims; ++d) {
-                        centroids.coords[j * data.n_dims + d] /= centroids.counts[j];
+                        centroid[d] = new_centroid_data[j * data.n_dims + d] / centroids.counts[j];
                     }
                 }
             }
@@ -251,11 +310,12 @@ void kmeans_sequential(const Dataset& data, Centroids& centroids,
 }
 
 template<typename Dataset, typename Centroids>
-void kmeans_parallel(const Dataset& data, Centroids& centroids,
-                    std::vector<int>& assignments, int max_iter) {
+void kmeans_parallel(const Dataset& data, Centroids& centroids, std::vector<int>& assignments, int max_iter) {
+    std::vector<float> new_centroid_data(centroids.k * data.n_dims);
+
     for (int iter = 0; iter < max_iter; ++iter) {
         // Assignment step
-        #pragma omp parallel for
+        #pragma omp parallel for default(none) shared(data, centroids, assignments)
         for (size_t i = 0; i < data.n_points; ++i) {
             float min_dist = std::numeric_limits<float>::max();
             int best_cluster = 0;
@@ -270,36 +330,33 @@ void kmeans_parallel(const Dataset& data, Centroids& centroids,
             assignments[i] = best_cluster;
         }
 
-        // Reset centroids
-        if constexpr (std::is_same_v<Centroids, CentroidsSoA>) {
-            for (auto& dim : centroids.coords_by_dim) {
-                std::fill(dim.begin(), dim.end(), 0.0f);
-            }
-        } else {
-            std::fill(centroids.coords.begin(), centroids.coords.end(), 0.0f);
-        }
+        // Reset accumulators
+        std::fill(new_centroid_data.begin(), new_centroid_data.end(), 0.0f);
         std::fill(centroids.counts.begin(), centroids.counts.end(), 0);
 
         // Update step with thread-local storage
-        #pragma omp parallel default(none) shared(data, centroids, assignments)
+        #pragma omp parallel default(none) shared(data, centroids, assignments, new_centroid_data)
         {
-            Centroids local_centroids;
-            local_centroids.resize(centroids.k, data.n_dims);
+            std::vector<float> local_centroid_data(centroids.k * data.n_dims, 0.0f);
             std::vector<size_t> local_counts(centroids.k, 0);
 
-            #pragma omp for
-            for (size_t i = 0; i < data.n_points; ++i) {
-                int cluster = assignments[i];
-                local_counts[cluster]++;
-
-                if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
+            if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
+                #pragma omp for schedule(static)
+                for (size_t i = 0; i < data.n_points; ++i) {
+                    int cluster = assignments[i];
+                    local_counts[cluster]++;
                     for (size_t d = 0; d < data.n_dims; ++d) {
-                        local_centroids.coords_by_dim[d][cluster] += data.coords_by_dim[d][i];
+                        local_centroid_data[d * centroids.k + cluster] += data.at(d, i);
                     }
-                } else {
+                }
+            } else {
+                #pragma omp for schedule(static)
+                for (size_t i = 0; i < data.n_points; ++i) {
+                    int cluster = assignments[i];
+                    local_counts[cluster]++;
+                    const float* point = data.get_point(i);
                     for (size_t d = 0; d < data.n_dims; ++d) {
-                        local_centroids.coords[cluster * data.n_dims + d] +=
-                            data.coords[i * data.n_dims + d];
+                        local_centroid_data[cluster * data.n_dims + d] += point[d];
                     }
                 }
             }
@@ -312,13 +369,12 @@ void kmeans_parallel(const Dataset& data, Centroids& centroids,
                 if constexpr (std::is_same_v<Centroids, CentroidsSoA>) {
                     for (size_t d = 0; d < data.n_dims; ++d) {
                         #pragma omp atomic
-                        centroids.coords_by_dim[d][j] += local_centroids.coords_by_dim[d][j];
+                        new_centroid_data[d * centroids.k + j] += local_centroid_data[d * centroids.k + j];
                     }
                 } else {
                     for (size_t d = 0; d < data.n_dims; ++d) {
                         #pragma omp atomic
-                        centroids.coords[j * data.n_dims + d] +=
-                            local_centroids.coords[j * data.n_dims + d];
+                        new_centroid_data[j * data.n_dims + d] += local_centroid_data[j * data.n_dims + d];
                     }
                 }
             }
@@ -329,11 +385,11 @@ void kmeans_parallel(const Dataset& data, Centroids& centroids,
             if (centroids.counts[j] > 0) {
                 if constexpr (std::is_same_v<Centroids, CentroidsSoA>) {
                     for (size_t d = 0; d < data.n_dims; ++d) {
-                        centroids.coords_by_dim[d][j] /= centroids.counts[j];
+                        centroids.at(d, j) = new_centroid_data[d * centroids.k + j] / centroids.counts[j];
                     }
                 } else {
                     for (size_t d = 0; d < data.n_dims; ++d) {
-                        centroids.coords[j * data.n_dims + d] /= centroids.counts[j];
+                        centroids.at(j, d) = new_centroid_data[j * data.n_dims + d] / centroids.counts[j];
                     }
                 }
             }
