@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <vector>
 #include <random>
 #include <iostream>
@@ -24,7 +25,7 @@ struct DatasetSoA : DatasetBase {
         return data[dim * n_points + point];
     }
 
-    const float& at(size_t dim, size_t point) const {
+    [[nodiscard]] const float& at(size_t dim, size_t point) const {
         return data[dim * n_points + point];
     }
 };
@@ -44,7 +45,7 @@ struct DatasetAoS : DatasetBase {
         return &coords[point * n_dims];
     }
 
-    const float* get_point(size_t point) const {
+    [[nodiscard]] const float* get_point(size_t point) const {
         return &coords[point * n_dims];
     }
 
@@ -52,15 +53,15 @@ struct DatasetAoS : DatasetBase {
         return coords[point * n_dims + dim];
     }
 
-    const float& at(size_t point, size_t dim) const {
+    [[nodiscard]] const float& at(size_t point, size_t dim) const {
         return coords[point * n_dims + dim];
     }
 };
 
 // Base Centroids structure
 struct CentroidsBase {
-    size_t k;
-    size_t n_dims;
+    size_t k{};
+    size_t n_dims{};
     std::vector<size_t> counts;
 };
 
@@ -79,7 +80,7 @@ struct CentroidsSoA : CentroidsBase {
 		return data[dim * k + cluster];
 	}
 
-    const float& at(size_t dim, size_t cluster) const {
+    [[nodiscard]] const float& at(size_t dim, size_t cluster) const {
         return data[dim * k + cluster];
     }
 };
@@ -99,7 +100,7 @@ struct CentroidsAoS : CentroidsBase {
         return &coords[cluster * n_dims];
     }
 
-    const float* get_centroid(size_t cluster) const {
+    [[nodiscard]] const float* get_centroid(size_t cluster) const {
         return &coords[cluster * n_dims];
     }
 
@@ -107,7 +108,7 @@ struct CentroidsAoS : CentroidsBase {
         return coords[cluster * n_dims + dim];
     }
 
-    const float& at(size_t cluster, size_t dim) const {
+    [[nodiscard]] const float& at(size_t cluster, size_t dim) const {
         return coords[cluster * n_dims + dim];
     }
 };
@@ -201,15 +202,24 @@ float compute_distance(const Dataset& data, size_t point_idx, const Centroids& c
     float dist = 0.0f;
 
     if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
-#pragma omp simd reduction(+:dist)
-        for (size_t d = 0; d < data.n_dims; ++d) {
-            float diff = data.at(d, point_idx) - centroids.at(d, centroid_idx);
+        const size_t n_dims = data.n_dims;
+        const size_t n_points = data.n_points;
+        const size_t k = centroids.k;
+
+        // Accesso diretto ai dati sottostanti per evitare overhead delle chiamate at()
+        const float* point_data = data.data.data();
+        const float* centroid_data = centroids.data.data();
+
+        #pragma omp simd reduction(+:dist)
+        for (size_t d = 0; d < n_dims; ++d) {
+            float diff = point_data[d * n_points + point_idx] - centroid_data[d * k + centroid_idx];
             dist += diff * diff;
         }
     } else {
+        // AoS implementation remains unchanged as it's already efficient
         const float* point = data.get_point(point_idx);
         const float* centroid = centroids.get_centroid(centroid_idx);
-#pragma omp simd reduction(+:dist)
+        #pragma omp simd reduction(+:dist)
         for (size_t d = 0; d < data.n_dims; ++d) {
             float diff = point[d] - centroid[d];
             dist += diff * diff;
@@ -234,7 +244,9 @@ void kmeans_sequential(const Dataset& data, Centroids& centroids,
                 float dist = compute_distance(data, i, centroids, j);
                 if (dist < min_dist) {
                     min_dist = dist;
-                    best_cluster = j;
+                    best_cluster = static_cast<int>(j); // static_cast is needed to avoid narrowing conversion
+                                                        // can't convert assingments from size_t to int because
+                                                        // it breaks the code
                 }
             }
             assignments[i] = best_cluster;
@@ -248,7 +260,7 @@ void kmeans_sequential(const Dataset& data, Centroids& centroids,
         if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
             for (size_t i = 0; i < data.n_points; ++i) {
                 int cluster = assignments[i];
-                centroids.counts[cluster]++;
+                ++centroids.counts[cluster];
                 for (size_t d = 0; d < data.n_dims; ++d) {
                     new_centroid_data[d * centroids.k + cluster] += data.at(d, i);
                 }
@@ -256,7 +268,7 @@ void kmeans_sequential(const Dataset& data, Centroids& centroids,
         } else {
             for (size_t i = 0; i < data.n_points; ++i) {
                 int cluster = assignments[i];
-                centroids.counts[cluster]++;
+                ++centroids.counts[cluster];
                 const float* point = data.get_point(i);
                 for (size_t d = 0; d < data.n_dims; ++d) {
                     new_centroid_data[cluster * data.n_dims + d] += point[d];
@@ -295,7 +307,7 @@ void kmeans_parallel(const Dataset& data, Centroids& centroids,
 		std::fill(new_centroid_data.begin(), new_centroid_data.end(), 0.0f);
 		std::fill(centroids.counts.begin(), centroids.counts.end(), 0);
 
-#pragma omp parallel default(none) shared(data, centroids, assignments, new_centroid_data)
+#pragma omp parallel default(none) shared(data, centroids, assignments, new_centroid_data) firstprivate(max_iter)
 		{
 			std::vector<float> local_centroid_data(centroids.k * data.n_dims, 0.0f);
 			std::vector<size_t> local_counts(centroids.k, 0);
@@ -310,7 +322,7 @@ void kmeans_parallel(const Dataset& data, Centroids& centroids,
 					float dist = compute_distance(data, i, centroids, j);
 					if (dist < min_dist) {
 						min_dist = dist;
-						best_cluster = j;
+						best_cluster = static_cast<int>(j);
 					}
 				}
 
