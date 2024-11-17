@@ -1,7 +1,7 @@
 import subprocess
-from pathlib import Path
-from typing import List, Tuple, Dict, Literal
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Literal, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,7 +19,8 @@ RESULTS_DIR = PROJECT_ROOT / "results"
 DATA_DIR.mkdir(exist_ok=True)
 RESULTS_DIR.mkdir(exist_ok=True)
 
-ImplementationType = Literal['AoS', 'SoA']
+ImplementationType = Literal["AoS", "SoA"]
+
 
 @dataclass
 class ExperimentResult:
@@ -29,8 +30,9 @@ class ExperimentResult:
     speedup: float
     implementation: ImplementationType
 
+
 def generate_dataset(
-        n_samples: int, n_features: int, n_clusters: int, random_state: int = 42
+    n_samples: int, n_features: int, n_clusters: int, random_state: int = 42
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Generate synthetic dataset for clustering."""
     print(
@@ -44,18 +46,20 @@ def generate_dataset(
     )
     return x, y
 
+
 def save_dataset(x: np.ndarray, filename: str) -> None:
     """Save dataset to CSV file."""
     filepath = DATA_DIR / filename
     print(f"Saving dataset to '{filepath}'...")
     np.savetxt(filepath, x, delimiter=",")
 
+
 def run_kmeans(
-        input_file: str,
-        k: int,
-        max_iter: int,
-        num_threads: List[int],
-        implementation: ImplementationType
+    input_file: str,
+    k: int,
+    max_iter: int,
+    num_threads: List[int],
+    implementation: ImplementationType,
 ) -> pd.DataFrame:
     """Run k-means with different thread counts and collect results."""
     results = []
@@ -65,12 +69,12 @@ def run_kmeans(
     for threads in num_threads:
         print(f"Running k-means with {threads} threads using {implementation}...")
         cmd = [
-            "./cmake-build-debug/kmeans",
+            "./cmake-build-release/kmeans",
             input_path,
             str(k),
             str(max_iter),
             str(threads),
-            impl_flag
+            impl_flag,
         ]
         print(f"Executing command: {' '.join(cmd)}")
         output = subprocess.check_output(cmd).decode()
@@ -88,13 +92,16 @@ def run_kmeans(
                 sequential_time=seq_time,
                 parallel_time=par_time,
                 speedup=speedup,
-                implementation=implementation
+                implementation=implementation,
             )
         )
 
     return pd.DataFrame([vars(r) for r in results])
 
-def plot_speedup_comparison(results_aos: pd.DataFrame, results_soa: pd.DataFrame, n_features: int) -> None:
+
+def plot_speedup_comparison(
+    results_aos: pd.DataFrame, results_soa: pd.DataFrame, n_features: int
+) -> None:
     """Plot speedup comparison between AoS and SoA implementations."""
     output_path = RESULTS_DIR / f"speedup_comparison_{n_features}d.png"
     print(f"Plotting speedup comparison to '{output_path}'...")
@@ -102,15 +109,28 @@ def plot_speedup_comparison(results_aos: pd.DataFrame, results_soa: pd.DataFrame
     plt.figure(figsize=(12, 7))
 
     # Plot both implementations
-    plt.plot(results_aos["threads"], results_aos["speedup"],
-             marker="o", label="AoS", linewidth=2, markersize=8)
-    plt.plot(results_soa["threads"], results_soa["speedup"],
-             marker="s", label="SoA", linewidth=2, markersize=8)
+    plt.plot(
+        results_aos["threads"],
+        results_aos["speedup"],
+        marker="o",
+        label="AoS",
+        linewidth=2,
+        markersize=8,
+    )
+    plt.plot(
+        results_soa["threads"],
+        results_soa["speedup"],
+        marker="s",
+        label="SoA",
+        linewidth=2,
+        markersize=8,
+    )
 
     # Plot ideal speedup
     ideal_speedup = results_aos["threads"]
-    plt.plot(results_aos["threads"], ideal_speedup, "--",
-             label="Ideal speedup", alpha=0.5)
+    plt.plot(
+        results_aos["threads"], ideal_speedup, "--", label="Ideal speedup", alpha=0.5
+    )
 
     plt.xlabel("Number of Threads")
     plt.ylabel("Speedup")
@@ -120,7 +140,10 @@ def plot_speedup_comparison(results_aos: pd.DataFrame, results_soa: pd.DataFrame
     plt.savefig(output_path)
     plt.close()
 
-def plot_execution_times_comparison(results_aos: pd.DataFrame, results_soa: pd.DataFrame, n_features: int) -> None:
+
+def plot_execution_times_comparison(
+    results_aos: pd.DataFrame, results_soa: pd.DataFrame, n_features: int
+) -> None:
     """Plot execution times comparison between AoS and SoA implementations."""
     output_path = RESULTS_DIR / f"execution_times_comparison_{n_features}d.png"
     print(f"Plotting execution times comparison to '{output_path}'...")
@@ -128,16 +151,40 @@ def plot_execution_times_comparison(results_aos: pd.DataFrame, results_soa: pd.D
     plt.figure(figsize=(12, 7))
 
     # Plot sequential times
-    plt.plot(results_aos["threads"], results_aos["sequential_time"],
-             marker="s", label="AoS Sequential", linewidth=2, markersize=8)
-    plt.plot(results_soa["threads"], results_soa["sequential_time"],
-             marker="^", label="SoA Sequential", linewidth=2, markersize=8)
+    plt.plot(
+        results_aos["threads"],
+        results_aos["sequential_time"],
+        marker="s",
+        label="AoS Sequential",
+        linewidth=2,
+        markersize=8,
+    )
+    plt.plot(
+        results_soa["threads"],
+        results_soa["sequential_time"],
+        marker="^",
+        label="SoA Sequential",
+        linewidth=2,
+        markersize=8,
+    )
 
     # Plot parallel times
-    plt.plot(results_aos["threads"], results_aos["parallel_time"],
-             marker="o", label="AoS Parallel", linewidth=2, markersize=8)
-    plt.plot(results_soa["threads"], results_soa["parallel_time"],
-             marker="v", label="SoA Parallel", linewidth=2, markersize=8)
+    plt.plot(
+        results_aos["threads"],
+        results_aos["parallel_time"],
+        marker="o",
+        label="AoS Parallel",
+        linewidth=2,
+        markersize=8,
+    )
+    plt.plot(
+        results_soa["threads"],
+        results_soa["parallel_time"],
+        marker="v",
+        label="SoA Parallel",
+        linewidth=2,
+        markersize=8,
+    )
 
     plt.xlabel("Number of Threads")
     plt.ylabel("Execution Time (ms)")
@@ -147,12 +194,13 @@ def plot_execution_times_comparison(results_aos: pd.DataFrame, results_soa: pd.D
     plt.savefig(output_path)
     plt.close()
 
+
 def plot_kmeans_clustering(
-        x: np.ndarray,
-        labels: np.ndarray,
-        n_features: int,
-        n_clusters: int,
-        implementation: ImplementationType,
+    x: np.ndarray,
+    labels: np.ndarray,
+    n_features: int,
+    n_clusters: int,
+    implementation: ImplementationType,
 ) -> None:
     """Plot visual clustering."""
     output_path = RESULTS_DIR / f"kmeans_clustering_{implementation}_{n_features}d.png"
@@ -177,11 +225,14 @@ def plot_kmeans_clustering(
         plt.savefig(output_path)
         plt.close()
     else:
-        print(f"Plotting is only supported for 2D and 3D datasets. Current dimensions: {n_features}")
+        print(
+            f"Plotting is only supported for 2D and 3D datasets. Current dimensions: {n_features}"
+        )
+
 
 def main():
     """Run experiments for both AoS and SoA implementations"""
-    implementations: List[ImplementationType] = ['AoS', 'SoA']
+    implementations: List[ImplementationType] = ["AoS", "SoA"]
 
     for n_features in N_FEATURES_LIST:
         print(f"\nRunning experiments for {n_features} dimensions...")
@@ -208,8 +259,10 @@ def main():
             plot_kmeans_clustering(x, y, n_features, N_CLUSTERS, impl)
 
         # Plot comparison results
-        plot_speedup_comparison(results_dict['AoS'], results_dict['SoA'], n_features)
-        plot_execution_times_comparison(results_dict['AoS'], results_dict['SoA'], n_features)
+        plot_speedup_comparison(results_dict["AoS"], results_dict["SoA"], n_features)
+        plot_execution_times_comparison(
+            results_dict["AoS"], results_dict["SoA"], n_features
+        )
 
         # Print summary
         print("\nResults summary:")
@@ -217,5 +270,7 @@ def main():
             print(f"\n{impl} Implementation:")
             print(results_dict[impl])
 
+
 if __name__ == "__main__":
     main()
+
