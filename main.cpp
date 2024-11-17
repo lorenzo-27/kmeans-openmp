@@ -1,13 +1,8 @@
-#include <algorithm>
 #include <vector>
 #include <random>
 #include <iostream>
 #include <fstream>
 #include <omp.h>
-
-// Tag dispatch for implementation selection
-struct SoATag {};
-struct AoSTag {};
 
 // Base Dataset structure
 struct DatasetBase {
@@ -17,21 +12,12 @@ struct DatasetBase {
 
 // SoA implementation
 struct DatasetSoA : DatasetBase {
-    std::vector<float> data; // Single contiguous array for all data
+	std::vector<float> data;
 
     void resize(size_t points, size_t dims) {
         n_points = points;
         n_dims = dims;
         data.resize(points * dims);
-    }
-
-    // Optimized accessors for better cache usage
-    float* get_dimension(size_t dim) {
-        return &data[dim * n_points];
-    }
-
-    const float* get_dimension(size_t dim) const {
-        return &data[dim * n_points];
     }
 
     float& at(size_t dim, size_t point) {
@@ -89,17 +75,9 @@ struct CentroidsSoA : CentroidsBase {
         counts.resize(clusters);
     }
 
-    float* get_dimension(size_t dim) {
-        return &data[dim * k];
-    }
-
-    const float* get_dimension(size_t dim) const {
-        return &data[dim * k];
-    }
-
-    float& at(size_t dim, size_t cluster) {
-        return data[dim * k + cluster];
-    }
+	float& at(size_t dim, size_t cluster) {
+		return data[dim * k + cluster];
+	}
 
     const float& at(size_t dim, size_t cluster) const {
         return data[dim * k + cluster];
@@ -219,8 +197,7 @@ Centroids initialize_centroids(const Dataset& data, size_t k) {
 }
 
 template<typename Dataset, typename Centroids>
-float compute_distance(const Dataset& data, size_t point_idx,
-                      const Centroids& centroids, size_t centroid_idx) {
+float compute_distance(const Dataset& data, size_t point_idx, const Centroids& centroids, size_t centroid_idx) {
     float dist = 0.0f;
 
     if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
@@ -310,91 +287,83 @@ void kmeans_sequential(const Dataset& data, Centroids& centroids,
 }
 
 template<typename Dataset, typename Centroids>
-void kmeans_parallel(const Dataset& data, Centroids& centroids, std::vector<int>& assignments, int max_iter) {
-    std::vector<float> new_centroid_data(centroids.k * data.n_dims);
+void kmeans_parallel(const Dataset& data, Centroids& centroids,
+                     std::vector<int>& assignments, int max_iter) {
+	std::vector<float> new_centroid_data(centroids.k * data.n_dims);
 
-    for (int iter = 0; iter < max_iter; ++iter) {
-        // Assignment step
-        #pragma omp parallel for default(none) shared(data, centroids, assignments)
-        for (size_t i = 0; i < data.n_points; ++i) {
-            float min_dist = std::numeric_limits<float>::max();
-            int best_cluster = 0;
+	for (int iter = 0; iter < max_iter; ++iter) {
+		std::fill(new_centroid_data.begin(), new_centroid_data.end(), 0.0f);
+		std::fill(centroids.counts.begin(), centroids.counts.end(), 0);
 
-            for (size_t j = 0; j < centroids.k; ++j) {
-                float dist = compute_distance(data, i, centroids, j);
-                if (dist < min_dist) {
-                    min_dist = dist;
-                    best_cluster = j;
-                }
-            }
-            assignments[i] = best_cluster;
-        }
+#pragma omp parallel default(none) shared(data, centroids, assignments, new_centroid_data)
+		{
+			std::vector<float> local_centroid_data(centroids.k * data.n_dims, 0.0f);
+			std::vector<size_t> local_counts(centroids.k, 0);
 
-        // Reset accumulators
-        std::fill(new_centroid_data.begin(), new_centroid_data.end(), 0.0f);
-        std::fill(centroids.counts.begin(), centroids.counts.end(), 0);
+			// Assignment e accumulo in un unico loop
+#pragma omp for
+			for (size_t i = 0; i < data.n_points; ++i) {
+				float min_dist = std::numeric_limits<float>::max();
+				int best_cluster = 0;
 
-        // Update step with thread-local storage
-        #pragma omp parallel default(none) shared(data, centroids, assignments, new_centroid_data)
-        {
-            std::vector<float> local_centroid_data(centroids.k * data.n_dims, 0.0f);
-            std::vector<size_t> local_counts(centroids.k, 0);
+				for (size_t j = 0; j < centroids.k; ++j) {
+					float dist = compute_distance(data, i, centroids, j);
+					if (dist < min_dist) {
+						min_dist = dist;
+						best_cluster = j;
+					}
+				}
 
-            if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
-                #pragma omp for schedule(static)
-                for (size_t i = 0; i < data.n_points; ++i) {
-                    int cluster = assignments[i];
-                    local_counts[cluster]++;
-                    for (size_t d = 0; d < data.n_dims; ++d) {
-                        local_centroid_data[d * centroids.k + cluster] += data.at(d, i);
-                    }
-                }
-            } else {
-                #pragma omp for schedule(static)
-                for (size_t i = 0; i < data.n_points; ++i) {
-                    int cluster = assignments[i];
-                    local_counts[cluster]++;
-                    const float* point = data.get_point(i);
-                    for (size_t d = 0; d < data.n_dims; ++d) {
-                        local_centroid_data[cluster * data.n_dims + d] += point[d];
-                    }
-                }
-            }
+				assignments[i] = best_cluster;
+				local_counts[best_cluster]++;
 
-            // Merge thread-local results using atomic operations
-            for (size_t j = 0; j < centroids.k; ++j) {
-                #pragma omp atomic
-                centroids.counts[j] += local_counts[j];
+				if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
+					for (size_t d = 0; d < data.n_dims; ++d) {
+						local_centroid_data[d * centroids.k + best_cluster] +=
+								data.at(d, i);
+					}
+				} else {
+					const float* point = data.get_point(i);
+					for (size_t d = 0; d < data.n_dims; ++d) {
+						local_centroid_data[best_cluster * data.n_dims + d] +=
+								point[d];
+					}
+				}
+			}
 
-                if constexpr (std::is_same_v<Centroids, CentroidsSoA>) {
-                    for (size_t d = 0; d < data.n_dims; ++d) {
-                        #pragma omp atomic
-                        new_centroid_data[d * centroids.k + j] += local_centroid_data[d * centroids.k + j];
-                    }
-                } else {
-                    for (size_t d = 0; d < data.n_dims; ++d) {
-                        #pragma omp atomic
-                        new_centroid_data[j * data.n_dims + d] += local_centroid_data[j * data.n_dims + d];
-                    }
-                }
-            }
-        }
+			// Merge dei risultati locali -- critical più efficiente di atomic
+#pragma omp critical
+			{
+				for (size_t j = 0; j < centroids.k; ++j) {
+					centroids.counts[j] += local_counts[j];
+					for (size_t d = 0; d < data.n_dims; ++d) {
+						if constexpr (std::is_same_v<Centroids, CentroidsSoA>) {
+							new_centroid_data[d * centroids.k + j] +=
+									local_centroid_data[d * centroids.k + j];
+						} else {
+							new_centroid_data[j * data.n_dims + d] +=
+									local_centroid_data[j * data.n_dims + d];
+						}
+					}
+				}
+			}
+		}
 
-        // Normalize centroids
-        for (size_t j = 0; j < centroids.k; ++j) {
-            if (centroids.counts[j] > 0) {
-                if constexpr (std::is_same_v<Centroids, CentroidsSoA>) {
-                    for (size_t d = 0; d < data.n_dims; ++d) {
-                        centroids.at(d, j) = new_centroid_data[d * centroids.k + j] / centroids.counts[j];
-                    }
-                } else {
-                    for (size_t d = 0; d < data.n_dims; ++d) {
-                        centroids.at(j, d) = new_centroid_data[j * data.n_dims + d] / centroids.counts[j];
-                    }
-                }
-            }
-        }
-    }
+		// Normalize centroids -- parallelization is useless here
+		for (size_t j = 0; j < centroids.k; ++j) {
+			if (centroids.counts[j] > 0) {
+				if constexpr (std::is_same_v<Centroids, CentroidsSoA>) {
+					for (size_t d = 0; d < data.n_dims; ++d) {
+						centroids.at(d, j) = new_centroid_data[d * centroids.k + j] / centroids.counts[j];
+					}
+				} else {
+					for (size_t d = 0; d < data.n_dims; ++d) {
+						centroids.at(j, d) = new_centroid_data[j * data.n_dims + d] / centroids.counts[j];
+					}
+				}
+			}
+		}
+	}
 }
 
 int main(int argc, char* argv[]) {
