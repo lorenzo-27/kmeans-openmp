@@ -216,7 +216,6 @@ float compute_distance(const Dataset& data, size_t point_idx, const Centroids& c
             dist += diff * diff;
         }
     } else {
-        // AoS implementation remains unchanged as it's already efficient
         const float* point = data.get_point(point_idx);
         const float* centroid = centroids.get_centroid(centroid_idx);
         #pragma omp simd reduction(+:dist)
@@ -230,8 +229,7 @@ float compute_distance(const Dataset& data, size_t point_idx, const Centroids& c
 }
 
 template<typename Dataset, typename Centroids>
-void kmeans_sequential(const Dataset& data, Centroids& centroids,
-                      std::vector<int>& assignments, int max_iter) {
+void kmeans_sequential(const Dataset& data, Centroids& centroids, std::vector<int>& assignments, int max_iter) {
     std::vector<float> new_centroid_data(centroids.k * data.n_dims, 0.0f);
 
     for (int iter = 0; iter < max_iter; ++iter) {
@@ -330,15 +328,18 @@ void kmeans_parallel(const Dataset& data, Centroids& centroids,
 				local_counts[best_cluster]++;
 
 				if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
-					for (size_t d = 0; d < data.n_dims; ++d) {
-						local_centroid_data[d * centroids.k + best_cluster] +=
-								data.at(d, i);
+					const size_t n_dims = data.n_dims;
+					const size_t n_points = data.n_points;
+					const size_t k = centroids.k;
+					const float* point_data = data.data.data();
+					
+					for (size_t d = 0; d < n_dims; ++d) {
+						local_centroid_data[d * k + best_cluster] += point_data[d * n_points + i];
 					}
 				} else {
 					const float* point = data.get_point(i);
 					for (size_t d = 0; d < data.n_dims; ++d) {
-						local_centroid_data[best_cluster * data.n_dims + d] +=
-								point[d];
+						local_centroid_data[best_cluster * data.n_dims + d] += point[d];
 					}
 				}
 			}
@@ -350,11 +351,9 @@ void kmeans_parallel(const Dataset& data, Centroids& centroids,
 					centroids.counts[j] += local_counts[j];
 					for (size_t d = 0; d < data.n_dims; ++d) {
 						if constexpr (std::is_same_v<Centroids, CentroidsSoA>) {
-							new_centroid_data[d * centroids.k + j] +=
-									local_centroid_data[d * centroids.k + j];
+							new_centroid_data[d * centroids.k + j] += local_centroid_data[d * centroids.k + j];
 						} else {
-							new_centroid_data[j * data.n_dims + d] +=
-									local_centroid_data[j * data.n_dims + d];
+							new_centroid_data[j * data.n_dims + d] += local_centroid_data[j * data.n_dims + d];
 						}
 					}
 				}
