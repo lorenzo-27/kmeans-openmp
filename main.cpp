@@ -311,7 +311,7 @@ void kmeans_parallel(const Dataset& data, Centroids& centroids,
 			std::vector<size_t> local_counts(centroids.k, 0);
 
 			// Assignment e accumulo in un unico loop
-#pragma omp for
+#pragma omp for schedule(auto)
 			for (size_t i = 0; i < data.n_points; ++i) {
 				float min_dist = std::numeric_limits<float>::max();
 				int best_cluster = 0;
@@ -328,16 +328,14 @@ void kmeans_parallel(const Dataset& data, Centroids& centroids,
 				local_counts[best_cluster]++;
 
 				if constexpr (std::is_same_v<Dataset, DatasetSoA>) {
-					const size_t n_dims = data.n_dims;
-					const size_t n_points = data.n_points;
-					const size_t k = centroids.k;
-					const float* point_data = data.data.data();
-					
-					for (size_t d = 0; d < n_dims; ++d) {
-						local_centroid_data[d * k + best_cluster] += point_data[d * n_points + i];
+				    const float* point_data = data.data.data();
+#pragma omp simd
+					for (size_t d = 0; d < data.n_dims; ++d) {
+						local_centroid_data[d * centroids.k + best_cluster] += point_data[d * data.n_points + i];
 					}
 				} else {
 					const float* point = data.get_point(i);
+#pragma omp simd
 					for (size_t d = 0; d < data.n_dims; ++d) {
 						local_centroid_data[best_cluster * data.n_dims + d] += point[d];
 					}
