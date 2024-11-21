@@ -311,7 +311,7 @@ void kmeans_parallel(const Dataset& data, Centroids& centroids,
 			std::vector<size_t> local_counts(centroids.k, 0);
 
 			// Assignment e accumulo in un unico loop
-#pragma omp for schedule(auto)
+#pragma omp for schedule(static)
 			for (size_t i = 0; i < data.n_points; ++i) {
 				float min_dist = std::numeric_limits<float>::max();
 				int best_cluster = 0;
