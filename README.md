@@ -1,12 +1,6 @@
 # A Comparative Analysis of AoS vs SoA in Parallel K-Means Implementation with OpenMP
 This repository presents a high-performance C++ implementation of the K-Means clustering algorithm, optimized for parallel execution using OpenMP. The project specifically focuses on comparing Array of Structures (AoS) versus Structure of Arrays (SoA) approaches in terms of performance and scalability.
 
-## Table of Contents
-- [Prerequisites](#prerequisites)
-- [Setup and Usage](#usage)
-- [Documentation](#documentation)
-- [License](#license)
-
 ## Prerequisites
 The project requires the following components:
 - A C++ compiler with OpenMP support (such as g++)
