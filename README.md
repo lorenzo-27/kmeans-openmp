@@ -40,7 +40,7 @@ This configuration has been tested and used with MacOS Ventura; it may differ fo
 > - results/: Stores performance plots and analysis tables
 
 ## Documentation
-For a comprehensive understanding of the implementation and performance analysis, please refer to our detailed technical report available here. The report includes:
+For a comprehensive understanding of the implementation and performance analysis, please refer to our detailed technical report available <a href="https://github.com/lorenzo-27/kmeans-openmp/blob/master/TR1-kmeans.pdf">here</a>. The report includes:
 - Implementation details
 - Performance benchmarks
 - Experimental results and analysis
