@@ -48,4 +48,4 @@ For a comprehensive understanding of the implementation and performance analysis
 > [!IMPORTANT]
 > The entire implementation is consolidated in main.cpp to optimize parallel performance, as Object-Oriented Programming patterns can introduce overhead in parallel computing contexts.
 ## License
-This project is licensed under the <a href="https://github.com/DavideDelBimbo/K-Means-OpenMP/blob/main/LICENSE" target="_blank">MIT</a> License.
+This project is licensed under the <a href="https://github.com/lorenzo-27/kmeans-openmp/blob/master/LICENSE" target="_blank">MIT</a> License.
